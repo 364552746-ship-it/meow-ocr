@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>🐱 喵图识字 - 图片转文字</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+/* ========== CSS Variables ========== */
+:root {
+  --peach: #FF8C69;
+  --pink: #FF6B8A;
+  --coral: #FF7B7B;
+  --mint: #6BD4B0;
+  --sky: #6BB5FF;
+  --yellow: #FFD93D;
+  --purple: #B8A9FF;
+  --bg-start: #FFF0E6;
+  --bg-mid: #FFE8F0;
+  --bg-end: #E8F0FF;
+  --card-bg: #FFFFFF;
+  --text: #3D3055;
+  --text-light: #8B7FA8;
+  --shadow: 0 4px 24px rgba(120, 80, 120, 0.10);
+  --shadow-lg: 0 12px 40px rgba(120, 80, 120, 0.14);
+  --radius: 22px;
+  --radius-sm: 14px;
+  --font: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+}
+
+/* ========== Reset & Base ========== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font);
+  min-height: 100vh;
+  background: linear-gradient(160deg, var(--bg-start) 0%, var(--bg-mid) 40%, var(--bg-end) 100%);
+  background-attachment: fixed;
+  color: var(--text);
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  overflow-x: hidden;
+}
+
+/* ========== Floating Background Decorations ========== */
+.bg-decos { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+.deco {
+  position: absolute; font-size: 28px; opacity: 0.16;
+  animation: floatAround 18s ease-in-out infinite;
+}
+.deco:nth-child(1) { top: 8%; left: 5%; animation-delay: 0s; animation-duration: 16s; font-size: 34px; }
+.deco:nth-child(2) { top: 15%; right: 8%; animation-delay: -4s; animation-duration: 20s; }
+.deco:nth-child(3) { bottom: 20%; left: 10%; animation-delay: -8s; animation-duration: 19s; font-size: 22px; }
+.deco:nth-child(4) { bottom: 12%; right: 6%; animation-delay: -12s; animation-duration: 17s; font-size: 32px; }
+.deco:nth-child(5) { top: 50%; left: 3%; animation-delay: -6s; animation-duration: 21s; font-size: 20px; }
+.deco:nth-child(6) { top: 40%; right: 4%; animation-delay: -10s; animation-duration: 15s; font-size: 26px; }
+
+@keyframes floatAround {
+  0%, 100% { transform: translateY(0) rotate(0deg) scale(1); }
+  25% { transform: translateY(-18px) rotate(6deg) scale(1.08); }
+  50% { transform: translateY(-6px) rotate(-4deg) scale(0.94); }
+  75% { transform: translateY(-22px) rotate(2deg) scale(1.05); }
+}
+
+/* ========== App Container ========== */
+.app-container {
+  position: relative; z-index: 1;
+  width: 100%; max-width: 460px;
+  display: flex; flex-direction: column; gap: 16px;
+  padding-bottom: 40px;
+}
+
+/* ========== Header ========== */
+.header {
+  text-align: center; padding: 8px 0 4px;
+  animation: slideDown 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.cat-mascot {
+  display: inline-block; font-size: 56px;
+  animation: catBounce 2.2s ease-in-out infinite;
+  filter: drop-shadow(0 6px 12px rgba(255, 140, 105, 0.25));
+  cursor: default; user-select: none;
+}
+@keyframes catBounce {
+  0%, 100% { transform: translateY(0) scale(1); }
+  15% { transform: translateY(-14px) scale(1.06); }
+  30% { transform: translateY(0) scale(0.97); }
+  45% { transform: translateY(-6px) scale(1.03); }
+  60% { transform: translateY(0) scale(1); }
+}
+.app-title {
+  font-size: 28px; font-weight: 800;
+  background: linear-gradient(135deg, var(--peach), var(--pink));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-top: 2px; letter-spacing: 1px;
+}
+.app-subtitle {
+  font-size: 13px; color: var(--text-light); margin-top: 2px; letter-spacing: 0.5px;
+}
+
+/* ========== Cards ========== */
+.card {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.3s, transform 0.3s;
+  animation: slideUp 0.5s ease-out both;
+}
+.card:hover { box-shadow: var(--shadow-lg); }
+.card:nth-child(2) { animation-delay: 0.05s; }
+.card:nth-child(3) { animation-delay: 0.1s; }
+.card:nth-child(4) { animation-delay: 0.15s; }
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ========== Upload Zone ========== */
+.upload-zone {
+  border: 2.5px dashed #E8D5F0;
+  border-radius: var(--radius-sm);
+  padding: 28px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  background: linear-gradient(135deg, #FFFAF8, #FFF5FC, #F8F6FF);
+}
+.upload-zone:hover, .upload-zone.drag-over {
+  border-color: var(--peach);
+  background: linear-gradient(135deg, #FFF3ED, #FFEDF5, #F0ECFF);
+  transform: scale(1.015);
+  box-shadow: 0 0 0 8px rgba(255, 140, 105, 0.08);
+}
+.upload-icon { font-size: 44px; display: block; margin-bottom: 8px; }
+.upload-text { font-size: 15px; font-weight: 600; color: var(--text); }
+.upload-hint { font-size: 12px; color: var(--text-light); margin-top: 4px; }
+
+/* ========== Buttons ========== */
+.btn-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.btn {
+  flex: 1; min-width: 100px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 12px 16px; border: none; border-radius: 50px;
+  font-size: 14px; font-weight: 650; font-family: var(--font);
+  cursor: pointer; transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  white-space: nowrap; user-select: none;
+}
+.btn:active { transform: scale(0.94); }
+.btn-primary { background: linear-gradient(135deg, var(--peach), var(--coral)); color: #fff; box-shadow: 0 4px 16px rgba(255, 140, 105, 0.35); }
+.btn-primary:hover { box-shadow: 0 6px 22px rgba(255, 140, 105, 0.45); transform: translateY(-1px); }
+.btn-secondary { background: #F5F0FA; color: var(--text); }
+.btn-secondary:hover { background: #EDE4F6; transform: translateY(-1px); }
+.btn-outline { background: #fff; color: var(--peach); border: 2px solid #FFD5C5; }
+.btn-outline:hover { border-color: var(--peach); background: #FFF8F5; }
+.btn-small { padding: 8px 14px; font-size: 12px; flex: 0; border-radius: 40px; }
+.btn-icon { font-size: 18px; }
+
+/* ========== Preview ========== */
+.preview-section { display: none; text-align: center; }
+.preview-section.show { display: block; animation: slideUp 0.4s ease-out; }
+.preview-img {
+  max-width: 100%; max-height: 260px; border-radius: var(--radius-sm);
+  box-shadow: var(--shadow); object-fit: contain;
+}
+.preview-info { font-size: 12px; color: var(--text-light); margin-top: 6px; }
+
+/* ========== Language Selector ========== */
+.lang-section { margin-top: 14px; }
+.lang-label { font-size: 12px; font-weight: 600; color: var(--text-light); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+.lang-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.lang-chip {
+  padding: 8px 16px; border-radius: 50px; font-size: 13px; font-weight: 600;
+  background: #F5F0FA; color: var(--text-light); cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border: 2px solid transparent; font-family: var(--font);
+}
+.lang-chip:hover { background: #EDE4F6; transform: translateY(-1px); }
+.lang-chip.active {
+  background: linear-gradient(135deg, var(--purple), #D0C4FF);
+  color: #fff; border-color: transparent;
+  box-shadow: 0 4px 14px rgba(184, 169, 255, 0.4);
+}
+
+/* ========== Progress ========== */
+.progress-section { display: none; text-align: center; padding: 10px 0; }
+.progress-section.show { display: block; animation: slideUp 0.4s ease-out; }
+.progress-cat { font-size: 48px; animation: catRun 0.6s ease-in-out infinite; display: block; }
+@keyframes catRun {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  25% { transform: translateY(-10px) rotate(-3deg); }
+  75% { transform: translateY(-6px) rotate(3deg); }
+}
+.progress-msg { font-size: 15px; font-weight: 600; color: var(--text); margin: 8px 0; min-height: 24px; }
+.progress-bar-wrap {
+  background: #F0E8F8; border-radius: 50px; height: 10px; overflow: hidden;
+  margin: 8px 0; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+}
+.progress-bar-fill {
+  height: 100%; border-radius: 50px;
+  background: linear-gradient(90deg, var(--peach), var(--pink), var(--purple));
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+  transition: width 0.3s ease-out;
+  width: 0%;
+}
+@keyframes shimmer {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+.progress-pct { font-size: 13px; font-weight: 700; color: var(--peach); }
+
+/* ========== Result ========== */
+.result-section { display: none; }
+.result-section.show { display: block; animation: slideUp 0.5s ease-out; }
+.result-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.result-title { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.conf-badge {
+  font-size: 11px; padding: 4px 10px; border-radius: 50px; font-weight: 600;
+  background: #E8F8F0; color: #2DA87A;
+}
+.result-text {
+  background: #FAF8FC; border-radius: var(--radius-sm); padding: 16px;
+  font-size: 15px; line-height: 1.7; min-height: 60px; max-height: 300px;
+  overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+  border: 1px solid #F0EAF5;
+}
+.result-text:empty::after { content: '（未识别到文字）'; color: #CCC; font-style: italic; }
+.result-actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+
+/* ========== History ========== */
+.history-section { margin-top: 4px; }
+.history-header {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; padding: 4px 0;
+}
+.history-title { font-size: 14px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.history-arrow { font-size: 14px; transition: transform 0.3s; color: var(--text-light); }
+.history-section.open .history-arrow { transform: rotate(180deg); }
+.history-count { font-size: 12px; color: var(--text-light); }
+.history-list { display: none; margin-top: 10px; }
+.history-section.open .history-list { display: flex; flex-direction: column; gap: 8px; }
+.history-item {
+  background: #FAF8FC; border-radius: var(--radius-sm); padding: 12px 14px;
+  cursor: pointer; transition: all 0.25s; border: 1px solid transparent;
+  animation: slideUp 0.3s ease-out both;
+}
+.history-item:hover { border-color: #E8D5F0; background: #FFF; box-shadow: var(--shadow); }
+.history-item-time { font-size: 11px; color: var(--text-light); }
+.history-item-preview { font-size: 13px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-empty { font-size: 13px; color: #CCC; text-align: center; padding: 16px; }
+
+/* ========== Confetti ========== */
+.confetti-container { position: fixed; inset: 0; pointer-events: none; z-index: 100; }
+.confetti-piece {
+  position: absolute; width: 12px; height: 12px; border-radius: 4px;
+  animation: confettiFall 1.6s ease-out forwards;
+}
+@keyframes confettiFall {
+  0% { transform: translateY(0) rotate(0deg) scale(1); opacity: 1; }
+  100% { transform: translateY(110vh) rotate(720deg) scale(0.2); opacity: 0; }
+}
+
+/* ========== Toast ========== */
+.toast {
+  position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%) translateY(100px);
+  background: #3D3055; color: #fff; padding: 12px 28px; border-radius: 50px;
+  font-size: 14px; font-weight: 600; z-index: 200;
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 8px 30px rgba(60, 48, 84, 0.3);
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+
+/* ========== Footer ========== */
+.footer {
+  text-align: center; font-size: 11px; color: var(--text-light);
+  padding-top: 4px; opacity: 0.7;
+}
+.footer span { margin: 0 6px; }
+
+/* ========== Responsive ========== */
+@media (max-width: 480px) {
+  body { padding: 10px; }
+  .app-container { gap: 12px; }
+  .card { padding: 16px; border-radius: 18px; }
+  .app-title { font-size: 24px; }
+  .cat-mascot { font-size: 44px; }
+  .btn { padding: 11px 14px; font-size: 13px; }
+  .upload-zone { padding: 22px 14px; }
+  .result-text { font-size: 14px; max-height: 220px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Background floating decorations -->
+<div class="bg-decos">
+  <span class="deco">🐾</span><span class="deco">⭐</span><span class="deco">🌈</span>
+  <span class="deco">🐾</span><span class="deco">💫</span><span class="deco">🌸</span>
+</div>
+
+<!-- App -->
+<div class="app-container">
+
+  <!-- Header -->
+  <header class="header">
+    <div class="cat-mascot" id="catMascot" title="点我喵~">🐱</div>
+    <h1 class="app-title">喵图识字</h1>
+    <p class="app-subtitle">拍一拍 · 拖一拖 · 文字全出来 ✨</p>
+  </header>
+
+  <!-- Main Card -->
+  <div class="card" id="mainCard">
+    <!-- Upload Zone -->
+    <div class="upload-zone" id="uploadZone">
+      <span class="upload-icon">📸</span>
+      <p class="upload-text">点击上传 / 拖拽图片到此处</p>
+      <p class="upload-hint">支持 JPG · PNG · WebP · 也支持 Ctrl+V 粘贴</p>
+      <input type="file" id="fileInput" accept="image/*" hidden>
+      <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btnCamera">📷 拍照</button>
+      <button class="btn btn-secondary" id="btnUpload">📁 选图片</button>
+    </div>
+
+    <!-- Preview -->
+    <div class="preview-section" id="previewSection">
+      <img class="preview-img" id="previewImg" src="" alt="预览图片">
+      <p class="preview-info" id="previewInfo"></p>
+      <button class="btn btn-outline btn-small" id="btnRetry" style="margin-top:8px">🔄 换一张</button>
+    </div>
+
+    <!-- Language Selector -->
+    <div class="lang-section">
+      <p class="lang-label">🌐 识别语言</p>
+      <div class="lang-chips" id="langChips">
+        <button class="lang-chip active" data-lang="chi_sim+eng">🇨🇳 中文+英文</button>
+        <button class="lang-chip" data-lang="chi_sim">中文简体</button>
+        <button class="lang-chip" data-lang="eng">English</button>
+        <button class="lang-chip" data-lang="jpn">日本語</button>
+        <button class="lang-chip" data-lang="kor">한국어</button>
+      </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-section" id="progressSection">
+      <span class="progress-cat">🔍</span>
+      <p class="progress-msg" id="progressMsg">喵~ 正在努力辨认中...</p>
+      <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progressBar"></div></div>
+      <p class="progress-pct" id="progressPct">0%</p>
+    </div>
+
+    <!-- Result -->
+    <div class="result-section" id="resultSection">
+      <div class="result-header">
+        <span class="result-title">✨ 识别结果</span>
+        <span class="conf-badge" id="confBadge">置信度 --%</span>
+      </div>
+      <div class="result-text" id="resultText" contenteditable="true"></div>
+      <div class="result-actions">
+        <button class="btn btn-primary btn-small" id="btnCopy">📋 复制文字</button>
+        <button class="btn btn-secondary btn-small" id="btnDownload">💾 下载 TXT</button>
+        <button class="btn btn-outline btn-small" id="btnClear">🗑️ 清除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- History Card -->
+  <div class="card history-section" id="historySection">
+    <div class="history-header" id="historyToggle">
+      <span class="history-title">📚 识别历史 <span class="history-count" id="historyCount"></span></span>
+      <span class="history-arrow">▼</span>
+    </div>
+    <div class="history-list" id="historyList"></div>
+  </div>
+
+  <!-- Footer -->
+  <p class="footer">
+    <span>🐱 喵图识字</span><span>·</span><span>基于 Tesseract OCR</span><span>·</span><span>隐私安全 · 本地识别</span>
+  </p>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+<!-- Confetti Container -->
+<div class="confetti-container" id="confettiContainer"></div>
+
+<script>
+/* ========== DOM Refs ========== */
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+
+const dom = {
+  uploadZone: $('#uploadZone'), fileInput: $('#fileInput'), cameraInput: $('#cameraInput'),
+  btnCamera: $('#btnCamera'), btnUpload: $('#btnUpload'), btnRetry: $('#btnRetry'),
+  previewSection: $('#previewSection'), previewImg: $('#previewImg'), previewInfo: $('#previewInfo'),
+  progressSection: $('#progressSection'), progressBar: $('#progressBar'),
+  progressMsg: $('#progressMsg'), progressPct: $('#progressPct'),
+  resultSection: $('#resultSection'), resultText: $('#resultText'), confBadge: $('#confBadge'),
+  btnCopy: $('#btnCopy'), btnDownload: $('#btnDownload'), btnClear: $('#btnClear'),
+  langChips: $$('.lang-chip'), historySection: $('#historySection'),
+  historyToggle: $('#historyToggle'), historyList: $('#historyList'), historyCount: $('#historyCount'),
+  toast: $('#toast'), confettiContainer: $('#confettiContainer'),
+  catMascot: $('#catMascot'), mainCard: $('#mainCard'),
+};
+
+/* ========== State ========== */
+const state = {
+  selectedFile: null,
+  selectedLang: 'chi_sim+eng',
+  isProcessing: false,
+};
+
+/* ========== Fun Messages ========== */
+const FUN_MESSAGES = [
+  '🐱 喵~ 正在努力辨认中...',
+  '🔍 猫咪戴上了眼镜，仔细查看...',
+  '📖 正在翻阅喵星字典...',
+  '🤔 这个字有点难，让我想想...',
+  '✨ 快了快了！猫咪在加速...',
+  '🎯 锁定目标文字中...',
+  '🐾 爪爪打字中，请稍候...',
+  '💡 啊哈！我看到了！',
+];
+
+/* ========== Toast ========== */
+let toastTimer;
+function showToast(msg) {
+  clearTimeout(toastTimer);
+  dom.toast.textContent = msg;
+  dom.toast.classList.add('show');
+  toastTimer = setTimeout(() => dom.toast.classList.remove('show'), 2200);
+}
+
+/* ========== Confetti ========== */
+function spawnConfetti() {
+  const colors = ['#FF8C69','#FF6B8A','#FFD93D','#6BD4B0','#6BB5FF','#B8A9FF','#FF7B7B','#FFB347'];
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < 60; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    piece.style.cssText = `
+      left: ${Math.random() * 100}%;
+      top: ${-10 - Math.random() * 20}px;
+      background: ${colors[Math.floor(Math.random() * colors.length)]};
+      animation-delay: ${Math.random() * 0.6}s;
+      animation-duration: ${1.2 + Math.random() * 2}s;
+      width: ${8 + Math.random() * 10}px;
+      height: ${8 + Math.random() * 10}px;
+      border-radius: ${Math.random() > 0.5 ? '50%' : '3px'};
+    `;
+    frag.appendChild(piece);
+  }
+  dom.confettiContainer.appendChild(frag);
+  setTimeout(() => { dom.confettiContainer.innerHTML = ''; }, 3000);
+}
+
+/* ========== Cat Interaction ========== */
+dom.catMascot.addEventListener('click', () => {
+  dom.catMascot.style.animation = 'none';
+  dom.catMascot.offsetHeight; // reflow
+  dom.catMascot.style.animation = 'catBounce 0.5s ease-in-out 3';
+  dom.catMascot.textContent = ['🐱','😸','😻','🙀','😼'][Math.floor(Math.random() * 5)];
+  setTimeout(() => { dom.catMascot.textContent = '🐱'; }, 1500);
+});
+
+/* ========== History ========== */
+const HISTORY_KEY = 'meow_ocr_history';
+const MAX_HISTORY = 20;
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
+  catch { return []; }
+}
+function saveHistory(entry) {
+  const hist = loadHistory();
+  hist.unshift({ id: Date.now(), time: new Date().toLocaleString(), text: entry.text.slice(0, 200), fullText: entry.text, lang: entry.lang, confidence: entry.confidence });
+  if (hist.length > MAX_HISTORY) hist.length = MAX_HISTORY;
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(hist));
+  renderHistory();
+}
+
+function deleteHistory(id) {
+  let hist = loadHistory();
+  hist = hist.filter(h => h.id !== id);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(hist));
+  renderHistory();
+}
+
+function clearAllHistory() {
+  if (confirm('确定要清除所有识别历史吗？')) {
+    localStorage.removeItem(HISTORY_KEY);
+    renderHistory();
+    showToast('🗑️ 历史已清除');
+  }
+}
+
+function renderHistory() {
+  const hist = loadHistory();
+  dom.historyCount.textContent = hist.length ? `(${hist.length})` : '';
+  if (!hist.length) {
+    dom.historyList.innerHTML = '<p class="history-empty">🐾 还没有识别记录，快来试试吧~</p>';
+    return;
+  }
+  dom.historyList.innerHTML = hist.map((h, i) => `
+    <div class="history-item" data-id="${h.id}" style="animation-delay:${i * 0.03}s">
+      <div class="history-item-time">🕐 ${h.time} · 置信度 ${h.confidence}%</div>
+      <div class="history-item-preview" title="点击查看详情">${h.text || '（空）'}</div>
+    </div>
+  `).join('');
+  // Click handler
+  dom.historyList.querySelectorAll('.history-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const h = hist.find(x => x.id === +el.dataset.id);
+      if (h) {
+        dom.resultText.textContent = h.fullText;
+        dom.confBadge.textContent = `置信度 ${h.confidence}%`;
+        dom.resultSection.classList.add('show');
+        dom.resultSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+    el.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      if (confirm('删除这条记录？')) deleteHistory(+el.dataset.id);
+    });
+  });
+  // Add clear all button
+  if (!dom.historyList.querySelector('.clear-all-btn')) {
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'btn btn-outline btn-small clear-all-btn';
+    clearBtn.textContent = '🗑️ 清空历史';
+    clearBtn.style.cssText = 'margin-top:8px; align-self:center;';
+    clearBtn.addEventListener('click', clearAllHistory);
+    dom.historyList.appendChild(clearBtn);
+  }
+}
+
+/* ========== History Toggle ========== */
+dom.historyToggle.addEventListener('click', () => {
+  dom.historySection.classList.toggle('open');
+});
+
+/* ========== Language Selection ========== */
+dom.langChips.forEach(chip => {
+  chip.addEventListener('click', () => {
+    dom.langChips.forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    state.selectedLang = chip.dataset.lang;
+  });
+});
+
+/* ========== File Input ========== */
+dom.btnUpload.addEventListener('click', () => dom.fileInput.click());
+dom.btnCamera.addEventListener('click', () => dom.cameraInput.click());
+dom.fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+dom.cameraInput.addEventListener('change', e => handleFile(e.target.files[0]));
+
+/* ========== Drag & Drop ========== */
+dom.uploadZone.addEventListener('dragover', e => { e.preventDefault(); dom.uploadZone.classList.add('drag-over'); });
+dom.uploadZone.addEventListener('dragleave', () => dom.uploadZone.classList.remove('drag-over'));
+dom.uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dom.uploadZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) handleFile(file);
+  else showToast('⚠️ 请拖入图片文件哦~');
+});
+dom.uploadZone.addEventListener('click', () => dom.fileInput.click());
+
+/* ========== Paste ========== */
+document.addEventListener('paste', e => {
+  if (state.isProcessing) return;
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      handleFile(item.getAsFile());
+      return;
+    }
+  }
+});
+
+/* ========== Handle File ========== */
+function handleFile(file) {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { showToast('⚠️ 请选择图片文件哦~'); return; }
+  state.selectedFile = file;
+  // Show preview
+  const url = URL.createObjectURL(file);
+  dom.previewImg.src = url;
+  dom.previewInfo.textContent = `${file.name || '图片'} · ${formatSize(file.size)}`;
+  dom.previewSection.classList.add('show');
+  dom.resultSection.classList.remove('show');
+  // Auto start OCR
+  startOCR(file);
+}
+
+dom.btnRetry.addEventListener('click', () => {
+  state.selectedFile = null;
+  dom.previewSection.classList.remove('show');
+  dom.resultSection.classList.remove('show');
+  dom.progressSection.classList.remove('show');
+  dom.previewImg.src = '';
+  dom.fileInput.value = '';
+  dom.cameraInput.value = '';
+});
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+/* ========== OCR Processing ========== */
+async function startOCR(file) {
+  if (state.isProcessing) return;
+  state.isProcessing = true;
+
+  // Show progress
+  dom.progressSection.classList.add('show');
+  dom.resultSection.classList.remove('show');
+  dom.progressBar.style.width = '0%';
+  dom.progressPct.textContent = '0%';
+  dom.progressMsg.textContent = FUN_MESSAGES[0];
+
+  // Rotate fun messages
+  let msgIdx = 0;
+  const msgInterval = setInterval(() => {
+    msgIdx = (msgIdx + 1) % FUN_MESSAGES.length;
+    dom.progressMsg.textContent = FUN_MESSAGES[msgIdx];
+  }, 1800);
+
+  try {
+    const imgUrl = URL.createObjectURL(file);
+
+    const result = await Tesseract.recognize(imgUrl, state.selectedLang, {
+      logger: info => {
+        if (info.status === 'recognizing text') {
+          const pct = Math.round(info.progress * 100);
+          dom.progressBar.style.width = pct + '%';
+          dom.progressPct.textContent = pct + '%';
+        }
+      },
+    });
+
+    URL.revokeObjectURL(imgUrl);
+    clearInterval(msgInterval);
+
+    // Done!
+    dom.progressBar.style.width = '100%';
+    dom.progressPct.textContent = '100%';
+    dom.progressMsg.textContent = '🎉 识别完成！猫咪辛苦了~';
+
+    // Show result
+    setTimeout(() => {
+      dom.progressSection.classList.remove('show');
+      dom.resultSection.classList.add('show');
+      const text = result.data.text.trim();
+      dom.resultText.textContent = text;
+      const conf = Math.round(result.data.confidence);
+      dom.confBadge.textContent = `置信度 ${conf}%`;
+      dom.confBadge.style.background = conf > 75 ? '#E8F8F0' : conf > 50 ? '#FFF8E8' : '#FFE8E8';
+      dom.confBadge.style.color = conf > 75 ? '#2DA87A' : conf > 50 ? '#C8960A' : '#D04040';
+
+      // Save to history
+      saveHistory({ text, lang: state.selectedLang, confidence: conf });
+
+      // Confetti!
+      spawnConfetti();
+
+      // Scroll to result
+      dom.resultSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 400);
+
+  } catch (err) {
+    clearInterval(msgInterval);
+    dom.progressSection.classList.remove('show');
+    console.error('OCR Error:', err);
+    showToast('😿 识别出错了，请重试...');
+  } finally {
+    state.isProcessing = false;
+  }
+}
+
+/* ========== Copy ========== */
+dom.btnCopy.addEventListener('click', async () => {
+  const text = dom.resultText.textContent.trim();
+  if (!text) { showToast('📝 没有可复制的文字哦~'); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('✅ 已复制到剪贴板！');
+  } catch {
+    // Fallback
+    dom.resultText.select();
+    document.execCommand('copy');
+    showToast('✅ 已复制！');
+  }
+});
+
+/* ========== Download ========== */
+dom.btnDownload.addEventListener('click', () => {
+  const text = dom.resultText.textContent.trim();
+  if (!text) { showToast('📝 没有可下载的内容哦~'); return; }
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `喵图识字_${new Date().toISOString().slice(0,10)}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('💾 下载成功！');
+});
+
+/* ========== Clear ========== */
+dom.btnClear.addEventListener('click', () => {
+  dom.resultText.textContent = '';
+  dom.resultSection.classList.remove('show');
+  dom.previewSection.classList.remove('show');
+  state.selectedFile = null;
+  showToast('🧹 已清除~');
+});
+
+/* ========== Init ========== */
+renderHistory();
+dom.historySection.classList.add('open');
+
+console.log('🐱 喵图识字 已就绪！');
+console.log('支持：拖拽上传 | 拍照 | 选图 | Ctrl+V粘贴');
+console.log('隐私安全：所有识别均在本地浏览器完成，图片不会上传到任何服务器 ✨');
+</script>
+
+</body>
+</html>
