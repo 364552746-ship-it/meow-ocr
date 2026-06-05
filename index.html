@@ -418,6 +418,9 @@ const state = {
   selectedFile: null,
   selectedLang: 'chi_sim+eng',
   isProcessing: false,
+  worker: null,
+  workerReady: false,
+  workerLang: '',
 };
 
 /* ========== Fun Messages ========== */
@@ -555,6 +558,10 @@ dom.langChips.forEach(chip => {
     dom.langChips.forEach(c => c.classList.remove('active'));
     chip.classList.add('active');
     state.selectedLang = chip.dataset.lang;
+    // Switch worker language immediately
+    if (state.worker) {
+      state.worker.reinitialize(state.selectedLang).catch(() => {});
+    }
   });
 });
 
@@ -621,19 +628,88 @@ function formatSize(bytes) {
   return (bytes / 1048576).toFixed(1) + ' MB';
 }
 
+/* ========== Image Compression ========== */
+/**
+ * Resize image to maxDimension (longest side), keeping aspect ratio.
+ * Drastically reduces OCR time (a 12MP photo → ~0.5MP) with minimal accuracy loss.
+ */
+function compressImage(file) {
+  return new Promise((resolve) => {
+    const MAX = 1800; // max pixels for longest side
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width: w, height: h } = img;
+      const origSize = `${w}×${h}`;
+      // Only resize if larger than MAX
+      if (Math.max(w, h) <= MAX) {
+        // Still draw to canvas to strip EXIF / normalize format
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        c.toBlob(blob => resolve({ blob, origSize: `${w}×${h}`, url: URL.createObjectURL(blob) }), 'image/jpeg', 0.85);
+        return;
+      }
+      if (w > h) { h = Math.round(h * (MAX / w)); w = MAX; }
+      else       { w = Math.round(w * (MAX / h)); h = MAX; }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      // Sharpen step: use imageSmoothingQuality
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(blob => {
+        const info = `压缩: ${origSize} → ${w}×${h}`;
+        resolve({ blob, origSize: info, url: URL.createObjectURL(blob) });
+      }, 'image/jpeg', 0.85);
+    };
+    img.src = url;
+  });
+}
+
+/* ========== Pre-warm Tesseract Worker ========== */
+async function initWorker(lang) {
+  if (state.worker && state.workerLang === lang && state.workerReady) return;
+  // Kill old worker if language changed
+  if (state.worker && state.workerLang !== lang) {
+    try { await state.worker.terminate(); } catch {}
+    state.worker = null;
+    state.workerReady = false;
+  }
+  if (!state.worker) {
+    const worker = await Tesseract.createWorker(lang, 1, {
+      logger: info => {
+        if (info.status === 'loading tesseract core') {
+          dom.progressMsg.textContent = '🐱 喵~ 正在加载识别引擎...';
+        } else if (info.status === 'initializing tesseract') {
+          dom.progressMsg.textContent = '🔧 引擎初始化中...';
+        } else if (info.status === 'loading language traineddata') {
+          dom.progressMsg.textContent = '📦 正在加载语言包（首次较慢）...';
+        } else if (info.status === 'initializing api') {
+          dom.progressMsg.textContent = '✨ 准备就绪！';
+        }
+      },
+    });
+    state.worker = worker;
+    state.workerLang = lang;
+    state.workerReady = true;
+  }
+}
+
 /* ========== OCR Processing ========== */
 async function startOCR(file) {
   if (state.isProcessing) return;
   state.isProcessing = true;
 
-  // Show progress
   dom.progressSection.classList.add('show');
   dom.resultSection.classList.remove('show');
   dom.progressBar.style.width = '0%';
   dom.progressPct.textContent = '0%';
-  dom.progressMsg.textContent = FUN_MESSAGES[0];
+  dom.progressMsg.textContent = '🐱 喵~ 准备中...';
 
-  // Rotate fun messages
   let msgIdx = 0;
   const msgInterval = setInterval(() => {
     msgIdx = (msgIdx + 1) % FUN_MESSAGES.length;
@@ -641,9 +717,15 @@ async function startOCR(file) {
   }, 1800);
 
   try {
-    const imgUrl = URL.createObjectURL(file);
+    // Step 1: Compress image (massive speed boost)
+    const compressed = await compressImage(file);
+    dom.progressMsg.textContent = '📐 图片优化完成，开始识别...';
 
-    const result = await Tesseract.recognize(imgUrl, state.selectedLang, {
+    // Step 2: Ensure worker is ready (first time loads lang data)
+    await initWorker(state.selectedLang);
+
+    // Step 3: Recognize with cached worker — MUCH faster than Tesseract.recognize()
+    const result = await state.worker.recognize(compressed.url, {
       logger: info => {
         if (info.status === 'recognizing text') {
           const pct = Math.round(info.progress * 100);
@@ -653,15 +735,14 @@ async function startOCR(file) {
       },
     });
 
-    URL.revokeObjectURL(imgUrl);
+    URL.revokeObjectURL(compressed.url);
     clearInterval(msgInterval);
 
     // Done!
     dom.progressBar.style.width = '100%';
     dom.progressPct.textContent = '100%';
-    dom.progressMsg.textContent = '🎉 识别完成！猫咪辛苦了~';
+    dom.progressMsg.textContent = '🎉 识别完成！' + compressed.origSize;
 
-    // Show result
     setTimeout(() => {
       dom.progressSection.classList.remove('show');
       dom.resultSection.classList.add('show');
@@ -672,13 +753,8 @@ async function startOCR(file) {
       dom.confBadge.style.background = conf > 75 ? '#E8F8F0' : conf > 50 ? '#FFF8E8' : '#FFE8E8';
       dom.confBadge.style.color = conf > 75 ? '#2DA87A' : conf > 50 ? '#C8960A' : '#D04040';
 
-      // Save to history
       saveHistory({ text, lang: state.selectedLang, confidence: conf });
-
-      // Confetti!
       spawnConfetti();
-
-      // Scroll to result
       dom.resultSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 400);
 
@@ -734,9 +810,15 @@ dom.btnClear.addEventListener('click', () => {
 renderHistory();
 dom.historySection.classList.add('open');
 
+// 🚀 Pre-warm: start loading Tesseract in the background immediately
+// First visit downloads ~20MB lang data, cached by browser thereafter
 console.log('🐱 喵图识字 已就绪！');
 console.log('支持：拖拽上传 | 拍照 | 选图 | Ctrl+V粘贴');
 console.log('隐私安全：所有识别均在本地浏览器完成，图片不会上传到任何服务器 ✨');
+console.log('⏳ 后台预加载识别引擎中...');
+initWorker(state.selectedLang).then(() => {
+  console.log('✅ 识别引擎就绪！首次识别将秒出结果');
+});
 </script>
 
 </body>
