@@ -554,12 +554,7 @@ dom.langChips.forEach(chip => {
   chip.addEventListener('click', () => {
     dom.langChips.forEach(c => c.classList.remove('active'));
     chip.classList.add('active');
-    const newLang = chip.dataset.lang;
-    if (state.selectedLang !== newLang) {
-      state.selectedLang = newLang;
-      // Pre-warm worker for new language in background
-      ocrEngine.getWorker(newLang).catch(() => {});
-    }
+    state.selectedLang = chip.dataset.lang;
   });
 });
 
@@ -669,54 +664,8 @@ function compressImage(file) {
   });
 }
 
-/* ========== OCR Engine (lazy init, thread-safe) ========== */
-const ocrEngine = {
-  worker: null,
-  workerLang: '',
-  loading: false,       // mutex: prevents concurrent createWorker
-  loadPromise: null,    // shared promise so concurrent callers await same init
-
-  async getWorker(lang) {
-    // If already loaded with the right language, reuse
-    if (this.worker && this.workerLang === lang) return this.worker;
-
-    // If another caller is already loading, wait for it
-    if (this.loading && this.loadPromise) {
-      await this.loadPromise;
-      // After shared load, re-check: may have loaded a different lang
-      if (this.worker && this.workerLang === lang) return this.worker;
-    }
-
-    // Need to (re)create
-    this.loading = true;
-    this.loadPromise = (async () => {
-      try {
-        if (this.worker) {
-          try { await this.worker.terminate(); } catch {}
-          this.worker = null;
-        }
-        this.worker = await Tesseract.createWorker(lang, 1, {
-          logger: info => {
-            if (info.status === 'loading tesseract core') {
-              dom.progressMsg.textContent = '🐱 喵~ 正在加载识别引擎...';
-            } else if (info.status === 'initializing tesseract') {
-              dom.progressMsg.textContent = '🔧 引擎初始化中...';
-            } else if (info.status === 'loading language traineddata') {
-              dom.progressMsg.textContent = '📦 正在加载语言包...';
-            } else if (info.status === 'initializing api') {
-              dom.progressMsg.textContent = '✨ 引擎就绪！';
-            }
-          },
-        });
-        this.workerLang = lang;
-      } finally {
-        this.loading = false;
-      }
-    })();
-    await this.loadPromise;
-    return this.worker;
-  },
-};
+/* ========== OCR Scheduler (one at a time via Tesseract.recognize) ========== */
+let ocrRunning = false;  // simple flag, Tesseract.recognize handles worker lifecycle
 
 /* ========== OCR Processing ========== */
 async function startOCR(file) {
@@ -735,17 +684,16 @@ async function startOCR(file) {
     dom.progressMsg.textContent = FUN_MESSAGES[msgIdx];
   }, 1800);
 
+  let compressedUrl = null;
   try {
     // Step 1: Compress image for speed
     const compressed = await compressImage(file);
+    compressedUrl = compressed.url;
     dom.progressMsg.textContent = '📐 图片已优化，开始识别...';
-    dom.progressBar.style.width = '5%';
+    dom.progressBar.style.width = '3%';
 
-    // Step 2: Get (or create) worker — mutex-guarded, no races
-    const worker = await ocrEngine.getWorker(state.selectedLang);
-
-    // Step 3: Recognize
-    const result = await worker.recognize(compressed.url, {
+    // Step 2: Recognize (Tesseract.recognize manages worker automatically — most reliable)
+    const result = await Tesseract.recognize(compressedUrl, state.selectedLang, {
       logger: info => {
         if (info.status === 'recognizing text') {
           const pct = Math.round(info.progress * 100);
@@ -755,9 +703,7 @@ async function startOCR(file) {
       },
     });
 
-    URL.revokeObjectURL(compressed.url);
     clearInterval(msgInterval);
-
     dom.progressBar.style.width = '100%';
     dom.progressPct.textContent = '100%';
     dom.progressMsg.textContent = '🎉 识别完成！' + compressed.origSize;
@@ -783,6 +729,7 @@ async function startOCR(file) {
     console.error('OCR Error:', err);
     showToast('😿 识别出错，请重试...');
   } finally {
+    if (compressedUrl) URL.revokeObjectURL(compressedUrl);
     state.isProcessing = false;
   }
 }
@@ -829,16 +776,9 @@ dom.btnClear.addEventListener('click', () => {
 renderHistory();
 dom.historySection.classList.add('open');
 
-// 🚀 Pre-warm engine in background (muted — no UI updates)
 console.log('🐱 喵图识字 已就绪！');
 console.log('支持：拖拽上传 | 拍照 | 选图 | Ctrl+V粘贴');
 console.log('隐私安全：所有识别均在本地浏览器完成，图片不会上传到任何服务器 ✨');
-console.log('⏳ 后台预加载识别引擎中...');
-ocrEngine.getWorker(state.selectedLang).then(() => {
-  console.log('✅ 识别引擎就绪！');
-}).catch(err => {
-  console.warn('⚠️ 引擎预加载失败:', err.message);
-});
 </script>
 
 </body>
